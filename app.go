@@ -2,17 +2,40 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/adrg/xdg"
 )
 
 // App struct
 type App struct {
 	ctx context.Context
+	fs  *FileStorage
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	if err := os.MkdirAll(filepath.Join(xdg.DataHome, "various-yam"), 0755); err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+
+	file, err := os.OpenFile(
+		filepath.Join(xdg.DataHome, "various-yam", "data.json"),
+		os.O_CREATE,
+		0644,
+	)
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+	file.Close()
+
+	return &App{
+		fs: NewFileStorage(filepath.Join(xdg.DataHome, "various-yam", "data.json")),
+	}
 }
 
 // startup is called at application startup
@@ -36,9 +59,4 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 // shutdown is called at application termination
 func (a *App) shutdown(ctx context.Context) {
 	// Perform your teardown here
-}
-
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
