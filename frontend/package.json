@@ -10,11 +10,11 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^4.8.2",
-    "vite": "^3.0.9",
-    "vite-plugin-solid": "^2.3.0"
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3",
+    "vite-plugin-solid": "^2.10.2"
   },
   "dependencies": {
-    "solid-js": "^1.5.1"
+    "solid-js": "^1.8.18"
   }
 ,"author":"Porasjeet Singh"}
