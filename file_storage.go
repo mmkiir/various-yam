@@ -78,6 +78,26 @@ func (fs *FileStorage) SetItem(key, value string) error {
 	return fs.writeFile(data)
 }
 
+// UpdateItem updates the value for the given key using the provided callback.
+func (fs *FileStorage) UpdateItem(key string, callback func(string) (string, error)) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	data, err := fs.readFile()
+	if err != nil {
+		data = make(map[string]string)
+	}
+
+	value, err := callback(data[key])
+	if err != nil {
+		return err
+	}
+
+	data[key] = value
+
+	return fs.writeFile(data)
+}
+
 // RemoveItem removes the value for the given key.
 func (fs *FileStorage) RemoveItem(key string) error {
 	fs.mu.Lock()

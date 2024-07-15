@@ -9,6 +9,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/gen2brain/malgo"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -195,4 +196,118 @@ func (a *App) SetPlaybackDeviceID(playbackDeviceID string) error {
 	}
 
 	return nil
+}
+
+// ListAudioFiles lists all available audio files
+func (a *App) ListAudioFiles() ([]string, error) {
+	serializedAudioFiles, _ := a.fs.GetItem("audioFiles")
+	if serializedAudioFiles == "" {
+		return []string{}, nil
+	}
+
+	audioFiles := []string{}
+	if err := json.Unmarshal([]byte(serializedAudioFiles), &audioFiles); err != nil {
+		return nil, err
+	}
+
+	return audioFiles, nil
+}
+
+// AddAudioFile adds an audio file
+func (a *App) AddAudioFile(audioFile string) error {
+	return a.fs.UpdateItem("audioFiles", func(value string) (string, error) {
+		var audioFiles []string
+		if value != "" {
+			if err := json.Unmarshal([]byte(value), &audioFiles); err != nil {
+				return "", err
+			}
+		}
+
+		audioFiles = append(audioFiles, audioFile)
+
+		serializedAudioFiles, err := json.Marshal(audioFiles)
+		if err != nil {
+			return "", err
+		}
+
+		return string(serializedAudioFiles), nil
+	})
+}
+
+// RemoveAudioFile removes an audio file
+func (a *App) RemoveAudioFile(audioFile string) error {
+	return a.fs.UpdateItem("audioFiles", func(value string) (string, error) {
+		var audioFiles []string
+		if value != "" {
+			if err := json.Unmarshal([]byte(value), &audioFiles); err != nil {
+				return "", err
+			}
+		}
+
+		for i, file := range audioFiles {
+			if file == audioFile {
+				audioFiles = append(audioFiles[:i], audioFiles[i+1:]...)
+				break
+			}
+		}
+
+		serializedAudioFiles, err := json.Marshal(audioFiles)
+		if err != nil {
+			return "", err
+		}
+
+		return string(serializedAudioFiles), nil
+	})
+}
+
+// PlayAudioFile plays an audio file
+func (a *App) PlayAudioFile(audioFile string) error {
+	// TODO: Implement
+	return nil
+}
+
+// StopAudioFile stops an audio file
+func (a *App) StopAudioFile(audioFile string) error {
+	// TODO: Implement
+	return nil
+}
+
+// FileFilter defines a filter for dialog boxes
+type FileFilter struct {
+	DisplayName string `json:"displayName"` // Filter information EG: "Image Files (*.jpg, *.png)"
+	Pattern     string `json:"pattern"`     // semicolon separated list of extensions, EG: "*.jpg;*.png"
+}
+
+// OpenDialogOptions contains the options for the OpenDialogOptions runtime method
+type OpenDialogOptions struct {
+	DefaultDirectory           string       `json:"defaultDirectory"`
+	DefaultFilename            string       `json:"defaultFilename"`
+	Title                      string       `json:"title"`
+	Filters                    []FileFilter `json:"filters"`
+	ShowHiddenFiles            bool         `json:"showHiddenFiles"`
+	CanCreateDirectories       bool         `json:"canCreateDirectories"`
+	ResolvesAliases            bool         `json:"resolvesAliases"`
+	TreatPackagesAsDirectories bool         `json:"treatPackagesAsDirectories"`
+}
+
+// OpenMultipleFilesDialog prompts the user to select a file
+func (a *App) OpenMultipleFilesDialog(dialogOptions OpenDialogOptions) ([]string, error) {
+	filters := make([]runtime.FileFilter, len(dialogOptions.Filters))
+	for i, filter := range dialogOptions.Filters {
+		filters[i] = runtime.FileFilter{
+			DisplayName: filter.DisplayName,
+			Pattern:     filter.Pattern,
+		}
+	}
+
+	return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory:           dialogOptions.DefaultDirectory,
+		DefaultFilename:            dialogOptions.DefaultFilename,
+		Title:                      dialogOptions.Title,
+		Filters:                    filters,
+		ShowHiddenFiles:            dialogOptions.ShowHiddenFiles,
+		CanCreateDirectories:       dialogOptions.CanCreateDirectories,
+		ResolvesAliases:            dialogOptions.ResolvesAliases,
+		TreatPackagesAsDirectories: dialogOptions.TreatPackagesAsDirectories,
+	})
 }
