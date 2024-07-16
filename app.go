@@ -78,19 +78,18 @@ func (a *App) ListCaptureDevices() ([]MediaDeviceInfo, error) {
 		slog.Info(message)
 	})
 	if err != nil {
-		slog.Error(err.Error())
 		return nil, err
 	}
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
 			slog.Error(err.Error())
+			os.Exit(1)
 		}
 		ctx.Free()
 	}()
 
 	deviceInfos, err := ctx.Devices(malgo.Capture)
 	if err != nil {
-		slog.Error(err.Error())
 		return nil, err
 	}
 
@@ -141,19 +140,18 @@ func (a *App) ListPlaybackDevices() ([]MediaDeviceInfo, error) {
 		slog.Info(message)
 	})
 	if err != nil {
-		slog.Error(err.Error())
 		return nil, err
 	}
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
 			slog.Error(err.Error())
+			os.Exit(1)
 		}
 		ctx.Free()
 	}()
 
 	deviceInfos, err := ctx.Devices(malgo.Playback)
 	if err != nil {
-		slog.Error(err.Error())
 		return nil, err
 	}
 
