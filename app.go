@@ -5,39 +5,43 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 
-	"log/slog"
-
 	"github.com/adrg/xdg"
 	"github.com/gen2brain/malgo"
+	"github.com/hajimehoshi/go-mp3"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/youpy/go-wav"
 )
 
 // App struct
 type App struct {
-	ctx                 context.Context
-	fs                  *FileStorage
-	cancelLoopbackAudio context.CancelFunc
+	ctx                          context.Context
+	fs                           *FileStorage
+	cancelLoopbackAudio          context.CancelFunc
+	cancelFunctionsForAudioFiles map[string]context.CancelFunc
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	dataPath := filepath.Join(xdg.DataHome, "various-yam")
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
-		slog.Error(err.Error())
+		log.Fatal("Failed to create data directory: ", err)
 	}
 
 	filePath := filepath.Join(dataPath, "data.json")
 	file, err := os.OpenFile(filePath, os.O_CREATE, 0644)
 	if err != nil {
-		slog.Error(err.Error())
+		log.Fatal("Failed to open data file: ", err)
 	}
 	file.Close()
 
 	return &App{
-		fs: NewFileStorage(filePath),
+		fs:                           NewFileStorage(filePath),
+		cancelFunctionsForAudioFiles: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -50,7 +54,7 @@ func (a *App) startup(ctx context.Context) {
 
 	go func() {
 		if err := a.LoopbackAudio(ctx); err != nil {
-			slog.Error(err.Error())
+			log.Fatal(err)
 		}
 	}()
 }
@@ -80,15 +84,13 @@ type MediaDeviceInfo struct {
 
 // ListCaptureDevices lists all available capture devices
 func (a *App) ListCaptureDevices() ([]MediaDeviceInfo, error) {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, func(message string) {
-		slog.Info(message)
-	})
+	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
-			slog.Error(err.Error())
+			log.Fatal(err)
 		}
 		ctx.Free()
 	}()
@@ -143,7 +145,7 @@ func (a *App) SetCaptureDeviceID(captureDeviceID string) error {
 
 	go func() {
 		if err := a.LoopbackAudio(ctx); err != nil {
-			slog.Error(err.Error())
+			log.Fatal(err)
 		}
 	}()
 
@@ -152,15 +154,13 @@ func (a *App) SetCaptureDeviceID(captureDeviceID string) error {
 
 // ListPlaybackDevices lists all available playback devices
 func (a *App) ListPlaybackDevices() ([]MediaDeviceInfo, error) {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, func(message string) {
-		slog.Info(message)
-	})
+	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
-			slog.Error(err.Error())
+			log.Fatal(err)
 		}
 		ctx.Free()
 	}()
@@ -215,7 +215,7 @@ func (a *App) SetPlaybackDeviceID(playbackDeviceID string) error {
 
 	go func() {
 		if err := a.LoopbackAudio(ctx); err != nil {
-			slog.Error(err.Error())
+			log.Fatal(err)
 		}
 	}()
 
@@ -286,13 +286,135 @@ func (a *App) RemoveAudioFile(audioFile string) error {
 
 // PlayAudioFile plays an audio file
 func (a *App) PlayAudioFile(audioFile string) error {
-	// TODO: Implement
+	a.StopAudioFile(audioFile)
+
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.cancelFunctionsForAudioFiles[audioFile] = cancel
+
+	go func() {
+		audioContext, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func() {
+			if err := audioContext.Uninit(); err != nil {
+				log.Fatal(err)
+			}
+			audioContext.Free()
+		}()
+
+		file, err := os.Open(audioFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+
+		var audioFormat malgo.FormatType
+		var channels uint32
+		var reader io.Reader
+		var sampleRate uint32
+
+		switch filepath.Ext(audioFile) {
+		case ".wav":
+			w := wav.NewReader(file)
+			f, err := w.Format()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			switch f.AudioFormat {
+			case 1:
+				switch f.BitsPerSample {
+				case 8:
+					audioFormat = malgo.FormatU8
+				case 16:
+					audioFormat = malgo.FormatS16
+				case 24:
+					audioFormat = malgo.FormatS24
+				case 32:
+					audioFormat = malgo.FormatS32
+				default:
+					log.Fatal("Unsupported bits per sample: ", f.BitsPerSample)
+				}
+			case 3:
+				switch f.BitsPerSample {
+				case 32:
+					audioFormat = malgo.FormatF32
+				default:
+					log.Fatal("Unsupported bits per sample: ", f.BitsPerSample)
+				}
+			default:
+				log.Fatal("Unsupported audio format: ", f.AudioFormat)
+			}
+
+			channels = uint32(f.NumChannels)
+			reader = w
+			sampleRate = f.SampleRate
+		case ".mp3":
+			m, err := mp3.NewDecoder(file)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			audioFormat = malgo.FormatS16
+			channels = 2
+			reader = m
+			sampleRate = uint32(m.SampleRate())
+		default:
+			log.Fatal("Unsupported audio file format: ", filepath.Ext(audioFile))
+		}
+
+		deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
+		deviceConfig.Alsa.NoMMap = 1
+		deviceConfig.Playback.Channels = channels
+		deviceConfig.Playback.Format = audioFormat
+		deviceConfig.SampleRate = sampleRate
+
+		deviceID, _ := a.GetPlaybackDeviceID()
+		if deviceID != "" {
+			deviceID, err := ParseHexStringToDeviceID(deviceID)
+			if err != nil {
+				log.Fatal(err)
+			}
+			deviceConfig.Playback.DeviceID = deviceID.Pointer()
+		}
+
+		deviceCallbacks := malgo.DeviceCallbacks{
+			Data: func(pOutputSample, _ []byte, _ uint32) {
+				io.ReadFull(reader, pOutputSample)
+			},
+		}
+
+		device, err := malgo.InitDevice(audioContext.Context, deviceConfig, deviceCallbacks)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if err := device.Start(); err != nil {
+			log.Fatal(err)
+		}
+
+		<-ctx.Done()
+
+		if err := device.Stop(); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
 	return nil
 }
 
 // StopAudioFile stops an audio file
 func (a *App) StopAudioFile(audioFile string) error {
-	// TODO: Implement
+	cancel, ok := a.cancelFunctionsForAudioFiles[audioFile]
+	if !ok {
+		return nil
+	}
+
+	cancel()
+
+	delete(a.cancelFunctionsForAudioFiles, audioFile)
+
 	return nil
 }
 
@@ -338,9 +460,7 @@ func (a *App) OpenMultipleFilesDialog(dialogOptions OpenDialogOptions) ([]string
 
 // LoopbackAudio loops back audio from the capture device to the playback device
 func (a *App) LoopbackAudio(ctx context.Context) error {
-	mCtx, err := malgo.InitContext(nil, malgo.ContextConfig{}, func(message string) {
-		slog.Info(message)
-	})
+	audioContext, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return err
 	}
@@ -368,7 +488,7 @@ func (a *App) LoopbackAudio(ctx context.Context) error {
 		},
 	}
 
-	captureDevice, err := malgo.InitDevice(mCtx.Context, captureDeviceConfig, captureDeviceCallbacks)
+	captureDevice, err := malgo.InitDevice(audioContext.Context, captureDeviceConfig, captureDeviceCallbacks)
 	if err != nil {
 		return err
 	}
@@ -402,7 +522,7 @@ func (a *App) LoopbackAudio(ctx context.Context) error {
 		},
 	}
 
-	playbackDevice, err := malgo.InitDevice(mCtx.Context, playbackDeviceConfig, playbackDeviceCallbacks)
+	playbackDevice, err := malgo.InitDevice(audioContext.Context, playbackDeviceConfig, playbackDeviceCallbacks)
 	if err != nil {
 		return err
 	}
