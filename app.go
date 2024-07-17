@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"log/slog"
 
 	"github.com/adrg/xdg"
 	"github.com/gen2brain/malgo"
@@ -14,47 +17,50 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
-	fs  *FileStorage
+	ctx                 context.Context
+	fs                  *FileStorage
+	cancelLoopbackAudio context.CancelFunc
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	if err := os.MkdirAll(filepath.Join(xdg.DataHome, "various-yam"), 0755); err != nil {
+	dataPath := filepath.Join(xdg.DataHome, "various-yam")
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
 		slog.Error(err.Error())
-		os.Exit(1)
 	}
 
-	file, err := os.OpenFile(
-		filepath.Join(xdg.DataHome, "various-yam", "data.json"),
-		os.O_CREATE,
-		0644,
-	)
+	filePath := filepath.Join(dataPath, "data.json")
+	file, err := os.OpenFile(filePath, os.O_CREATE, 0644)
 	if err != nil {
 		slog.Error(err.Error())
-		os.Exit(1)
 	}
 	file.Close()
 
 	return &App{
-		fs: NewFileStorage(filepath.Join(xdg.DataHome, "various-yam", "data.json")),
+		fs: NewFileStorage(filePath),
 	}
 }
 
 // startup is called at application startup
 func (a *App) startup(ctx context.Context) {
-	// Perform your setup here
 	a.ctx = ctx
+
+	ctx, cancel := context.WithCancel(ctx)
+	a.cancelLoopbackAudio = cancel
+
+	go func() {
+		if err := a.LoopbackAudio(ctx); err != nil {
+			slog.Error(err.Error())
+		}
+	}()
 }
 
 // domReady is called after front-end resources have been loaded
-func (a App) domReady(ctx context.Context) {
+func (a *App) domReady(ctx context.Context) {
 	// Add your action here
 }
 
-// beforeClose is called when the application is about to quit,
-// either by clicking the window close button or calling runtime.Quit.
-// Returning true will cause the application to continue, false will continue shutdown as normal.
+// beforeClose is called when the application is about to quit
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	return false
 }
@@ -83,7 +89,6 @@ func (a *App) ListCaptureDevices() ([]MediaDeviceInfo, error) {
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
 			slog.Error(err.Error())
-			os.Exit(1)
 		}
 		ctx.Free()
 	}()
@@ -105,14 +110,14 @@ func (a *App) ListCaptureDevices() ([]MediaDeviceInfo, error) {
 	return devices, nil
 }
 
-// GetCaptureDevice gets the capture device by ID
+// GetCaptureDeviceID gets the capture device by ID
 func (a *App) GetCaptureDeviceID() (string, error) {
 	serializedCaptureDeviceID, _ := a.fs.GetItem("captureDeviceID")
 	if serializedCaptureDeviceID == "" {
 		return "", nil
 	}
 
-	captureDeviceID := ""
+	var captureDeviceID string
 	if err := json.Unmarshal([]byte(serializedCaptureDeviceID), &captureDeviceID); err != nil {
 		return "", err
 	}
@@ -131,6 +136,17 @@ func (a *App) SetCaptureDeviceID(captureDeviceID string) error {
 		return err
 	}
 
+	a.cancelLoopbackAudio()
+
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.cancelLoopbackAudio = cancel
+
+	go func() {
+		if err := a.LoopbackAudio(ctx); err != nil {
+			slog.Error(err.Error())
+		}
+	}()
+
 	return nil
 }
 
@@ -145,7 +161,6 @@ func (a *App) ListPlaybackDevices() ([]MediaDeviceInfo, error) {
 	defer func() {
 		if err := ctx.Uninit(); err != nil {
 			slog.Error(err.Error())
-			os.Exit(1)
 		}
 		ctx.Free()
 	}()
@@ -174,7 +189,7 @@ func (a *App) GetPlaybackDeviceID() (string, error) {
 		return "", nil
 	}
 
-	playbackDeviceID := ""
+	var playbackDeviceID string
 	if err := json.Unmarshal([]byte(serializedPlaybackDeviceID), &playbackDeviceID); err != nil {
 		return "", err
 	}
@@ -193,6 +208,17 @@ func (a *App) SetPlaybackDeviceID(playbackDeviceID string) error {
 		return err
 	}
 
+	a.cancelLoopbackAudio()
+
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.cancelLoopbackAudio = cancel
+
+	go func() {
+		if err := a.LoopbackAudio(ctx); err != nil {
+			slog.Error(err.Error())
+		}
+	}()
+
 	return nil
 }
 
@@ -203,7 +229,7 @@ func (a *App) ListAudioFiles() ([]string, error) {
 		return []string{}, nil
 	}
 
-	audioFiles := []string{}
+	var audioFiles []string
 	if err := json.Unmarshal([]byte(serializedAudioFiles), &audioFiles); err != nil {
 		return nil, err
 	}
@@ -308,4 +334,109 @@ func (a *App) OpenMultipleFilesDialog(dialogOptions OpenDialogOptions) ([]string
 		ResolvesAliases:            dialogOptions.ResolvesAliases,
 		TreatPackagesAsDirectories: dialogOptions.TreatPackagesAsDirectories,
 	})
+}
+
+// LoopbackAudio loops back audio from the capture device to the playback device
+func (a *App) LoopbackAudio(ctx context.Context) error {
+	mCtx, err := malgo.InitContext(nil, malgo.ContextConfig{}, func(message string) {
+		slog.Info(message)
+	})
+	if err != nil {
+		return err
+	}
+
+	captureDeviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
+	captureDeviceConfig.Alsa.NoMMap = 1
+	captureDeviceConfig.Capture.Channels = 1
+	captureDeviceConfig.Capture.Format = malgo.FormatS16
+	captureDeviceConfig.SampleRate = 44100
+
+	captureDeviceID, _ := a.GetCaptureDeviceID()
+	if captureDeviceID != "" {
+		deviceID, err := ParseHexStringToDeviceID(captureDeviceID)
+		if err != nil {
+			return err
+		}
+		captureDeviceConfig.Capture.DeviceID = deviceID.Pointer()
+	}
+
+	pInputSamplesChannel := make(chan []byte)
+
+	captureDeviceCallbacks := malgo.DeviceCallbacks{
+		Data: func(_, pInputSamples []byte, _ uint32) {
+			pInputSamplesChannel <- pInputSamples
+		},
+	}
+
+	captureDevice, err := malgo.InitDevice(mCtx.Context, captureDeviceConfig, captureDeviceCallbacks)
+	if err != nil {
+		return err
+	}
+
+	if err := captureDevice.Start(); err != nil {
+		return err
+	}
+
+	playbackDeviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
+	playbackDeviceConfig.Alsa.NoMMap = 1
+	playbackDeviceConfig.Playback.Channels = 1
+	playbackDeviceConfig.Playback.Format = malgo.FormatS16
+	playbackDeviceConfig.SampleRate = 44100
+
+	playbackDeviceID, _ := a.GetPlaybackDeviceID()
+	if playbackDeviceID != "" {
+		deviceID, err := ParseHexStringToDeviceID(playbackDeviceID)
+		if err != nil {
+			return err
+		}
+		playbackDeviceConfig.Playback.DeviceID = deviceID.Pointer()
+	}
+
+	playbackDeviceCallbacks := malgo.DeviceCallbacks{
+		Data: func(pOutputSample, _ []byte, _ uint32) {
+			pInputSamples, ok := <-pInputSamplesChannel
+			if !ok {
+				return
+			}
+			copy(pOutputSample, pInputSamples)
+		},
+	}
+
+	playbackDevice, err := malgo.InitDevice(mCtx.Context, playbackDeviceConfig, playbackDeviceCallbacks)
+	if err != nil {
+		return err
+	}
+
+	if err := playbackDevice.Start(); err != nil {
+		return err
+	}
+
+	<-ctx.Done()
+
+	if err := captureDevice.Stop(); err != nil {
+		return err
+	}
+
+	if err := playbackDevice.Stop(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ParseHexStringToDeviceID parses a hex string to a malgo.DeviceID
+func ParseHexStringToDeviceID(s string) (malgo.DeviceID, error) {
+	bytes, err := hex.DecodeString(s)
+	if err != nil {
+		return malgo.DeviceID{}, err
+	}
+
+	if len(bytes) > len(malgo.DeviceID{}) {
+		return malgo.DeviceID{}, fmt.Errorf("malgo.DeviceID is too short for the given string")
+	}
+
+	var deviceID malgo.DeviceID
+	copy(deviceID[:], bytes)
+
+	return deviceID, nil
 }

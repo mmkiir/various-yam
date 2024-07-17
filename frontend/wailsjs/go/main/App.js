@@ -26,6 +26,10 @@ export function ListPlaybackDevices() {
   return window['go']['main']['App']['ListPlaybackDevices']();
 }
 
+export function LoopbackAudio(arg1) {
+  return window['go']['main']['App']['LoopbackAudio'](arg1);
+}
+
 export function OpenMultipleFilesDialog(arg1) {
   return window['go']['main']['App']['OpenMultipleFilesDialog'](arg1);
 }
