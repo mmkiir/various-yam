@@ -1,6 +1,7 @@
-import { type Component, For } from 'solid-js'
+import { type Component, createSignal, For, Show } from 'solid-js'
 import { OpenMultipleFilesDialog } from '../wailsjs/go/main/App'
 import { main } from '../wailsjs/go/models'
+import { useAudioFileKeybindings } from './useAudioFileKeybindings'
 import { useAudioFiles } from './useAudioFiles'
 import { useCaptureDeviceID } from './useCaptureDeviceID'
 import { useCaptureDevices } from './useCaptureDevices'
@@ -8,57 +9,40 @@ import { usePlaybackDeviceID } from './usePlaybackDeviceID'
 import { usePlaybackDevices } from './usePlaybackDevices'
 
 const App: Component = () => {
+  const { audioFileKeybindings, setAudioFileKeybinding, removeAudioFileKeybinding } = useAudioFileKeybindings()
   const { audioFiles, addAudioFile, removeAudioFile, playAudioFile, stopAudioFile } = useAudioFiles()
   const { captureDeviceID, setCaptureDeviceID } = useCaptureDeviceID()
   const { captureDevices, refetchCaptureDevices } = useCaptureDevices()
   const { playbackDeviceID, setPlaybackDeviceID } = usePlaybackDeviceID()
   const { playbackDevices, refetchPlaybackDevices } = usePlaybackDevices()
 
-  const handleCaptureDeviceIDChange = (event: Event & { currentTarget: HTMLSelectElement, target: HTMLSelectElement }) => {
-    setCaptureDeviceID(event.currentTarget.value).catch((err: unknown) => {
-      console.error(err)
-    })
+  const handleCaptureDeviceIDChange = async (event: Event & { currentTarget: HTMLSelectElement, target: HTMLSelectElement }) => {
+    await setCaptureDeviceID(event.currentTarget.value)
   }
 
-  const handlePlaybackDeviceIDChange = (event: Event & { currentTarget: HTMLSelectElement, target: HTMLSelectElement }) => {
-    setPlaybackDeviceID(event.currentTarget.value).catch((err: unknown) => {
-      console.error(err)
-    })
+  const handlePlaybackDeviceIDChange = async (event: Event & { currentTarget: HTMLSelectElement, target: HTMLSelectElement }) => {
+    await setPlaybackDeviceID(event.currentTarget.value)
   }
 
-  const handleCaptureDevicesFocus = () => {
-    Promise.resolve(refetchCaptureDevices()).catch((err: unknown) => {
-      console.error(err)
-    })
+  const handleCaptureDevicesFocus = async () => {
+    await refetchCaptureDevices()
   }
 
-  const handlePlaybackDevicesFocus = () => {
-    Promise.resolve(refetchPlaybackDevices()).catch((err: unknown) => {
-      console.error(err)
-    })
+  const handlePlaybackDevicesFocus = async () => {
+    await refetchPlaybackDevices()
   }
 
-  const handleAction = (action: () => Promise<void>) => () => {
-    action().catch((err: unknown) => {
-      console.error(err)
-    })
-  }
-
-  const handleOpenMultipleFilesDialog = () => {
-    OpenMultipleFilesDialog({
+  const handleOpenMultipleFilesDialog = async () => {
+    const files = await OpenMultipleFilesDialog({
       title: 'Select audio files',
       filters: [{ displayName: 'Audio files', pattern: '*.mp3;*.wav;*.ogg' }],
     } as main.OpenDialogOptions)
-      .then((files) => {
-        files.forEach((file) => {
-          addAudioFile(file).catch((err: unknown) => {
-            console.error(err)
-          })
-        })
-      })
-      .catch((err: unknown) => {
+
+    files.forEach((file) => {
+      addAudioFile(file).catch((err: unknown) => {
         console.error(err)
       })
+    })
   }
 
   return (
@@ -75,7 +59,11 @@ const App: Component = () => {
             <li>
               <button
                 class="outline"
-                onClick={handleOpenMultipleFilesDialog}
+                onClick={() => {
+                  handleOpenMultipleFilesDialog().catch((err: unknown) => {
+                    console.error(err)
+                  })
+                }}
               >
                 📂
               </button>
@@ -91,8 +79,16 @@ const App: Component = () => {
         }}
       >
         <select
-          onChange={handleCaptureDeviceIDChange}
-          onFocus={handleCaptureDevicesFocus}
+          onChange={(event) => {
+            handleCaptureDeviceIDChange(event).catch((err: unknown) => {
+              console.error(err)
+            })
+          }}
+          onFocus={() => {
+            handleCaptureDevicesFocus().catch((err: unknown) => {
+              console.error(err)
+            })
+          }}
         >
           <For each={captureDevices()}>
             {device => (
@@ -106,8 +102,16 @@ const App: Component = () => {
           </For>
         </select>
         <select
-          onChange={handlePlaybackDeviceIDChange}
-          onFocus={handlePlaybackDevicesFocus}
+          onChange={(event) => {
+            handlePlaybackDeviceIDChange(event).catch((err: unknown) => {
+              console.error(err)
+            })
+          }}
+          onFocus={() => {
+            handlePlaybackDevicesFocus().catch((err: unknown) => {
+              console.error(err)
+            })
+          }}
         >
           <For each={playbackDevices()}>
             {device => (
@@ -122,27 +126,143 @@ const App: Component = () => {
         </select>
         <ul>
           <For each={audioFiles()}>
-            {audioFile => (
-              <li style={{
-                display: 'flex',
-                gap: 'var(--pico-spacing)',
-              }}
-              >
-                <span style={{ flex: 1 }}>{audioFile}</span>
-                <For each={[
-                  ['▶️', () => playAudioFile(audioFile)],
-                  ['⏹️', () => stopAudioFile(audioFile)],
-                  ['🗑️', () => removeAudioFile(audioFile)],
-                ] as const}
+            {(audioFile) => {
+              const [heldKeys, setHeldKeys] = createSignal<string[]>([])
+              const [isRecording, setIsRecording] = createSignal(false)
+
+              let dialog: HTMLDialogElement | undefined
+
+              const handleKeyDown = (event: KeyboardEvent) => {
+                event.preventDefault()
+                if (!isRecording()) {
+                  setHeldKeys([])
+                  setIsRecording(true)
+                }
+                if (!heldKeys().includes(event.key)) {
+                  setHeldKeys([...heldKeys(), event.key])
+                }
+              }
+
+              const handleKeyUp = () => {
+                if (isRecording()) {
+                  setIsRecording(false)
+                }
+              }
+
+              const handleSave = async () => {
+                if (heldKeys().length === 0) {
+                  return
+                }
+
+                await setAudioFileKeybinding(audioFile, heldKeys().join(' + '))
+                setHeldKeys([])
+                setIsRecording(false)
+              }
+
+              return (
+                <li style={{
+                  display: 'flex',
+                  gap: 'calc(var(--pico-spacing) / 2)',
+                }}
                 >
-                  {([emoji, action]) => (
-                    <button class="outline" onClick={handleAction(action)}>
-                      {emoji}
-                    </button>
-                  )}
-                </For>
-              </li>
-            )}
+                  <span style={{ flex: 1 }}>
+                    {audioFile}
+                  </span>
+                  <Show when={audioFileKeybindings()?.[audioFile] !== undefined}>
+                    <kbd style={{ 'align-self': 'center' }}>
+                      {audioFileKeybindings()?.[audioFile] ?? ''}
+                    </kbd>
+                  </Show>
+                  <button
+                    class="outline"
+                    onClick={() => {
+                      dialog?.show()
+                    }}
+                  >
+                    ⌨️
+                  </button>
+                  <button
+                    class="outline"
+                    onClick={() => {
+                      playAudioFile(audioFile).catch((err: unknown) => {
+                        console.error(err)
+                      })
+                    }}
+                  >
+                    ▶️
+                  </button>
+                  <button
+                    class="outline"
+                    onClick={() => {
+                      stopAudioFile(audioFile).catch((err: unknown) => {
+                        console.error(err)
+                      })
+                    }}
+                  >
+                    ⏹️
+                  </button>
+                  <button
+                    class="outline"
+                    onClick={() => {
+                      removeAudioFile(audioFile).catch((err: unknown) => {
+                        console.error(err)
+                      })
+                    }}
+                  >
+                    🗑️
+                  </button>
+                  <dialog ref={dialog}>
+                    <article>
+                      <header>
+                        {audioFile}
+                      </header>
+                      <fieldset role="group">
+                        <input
+                          type="text"
+                          value={
+                            heldKeys().length > 0
+                              ? heldKeys().join(' + ')
+                              : audioFileKeybindings()?.[audioFile] ?? ''
+                          }
+                          onKeyDown={handleKeyDown}
+                          onKeyUp={handleKeyUp}
+                        />
+                        <button
+                          onClick={() => {
+                            setHeldKeys([])
+                            setIsRecording(false)
+                            removeAudioFileKeybinding(audioFile).catch((err: unknown) => {
+                              console.error(err)
+                            })
+                          }}
+                        >
+                          ❌
+                        </button>
+                      </fieldset>
+                      <footer>
+                        <button
+                          onClick={() => {
+                            dialog?.close()
+                          }}
+                        >
+                          Close
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSave().catch((err: unknown) => {
+                              console.error(err)
+                            })
+                            dialog?.close()
+                          }}
+                        >
+                          Save
+                        </button>
+                      </footer>
+                    </article>
+                  </dialog>
+                </li>
+              )
+            }}
           </For>
         </ul>
       </main>

@@ -9,10 +9,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/adrg/xdg"
 	"github.com/gen2brain/malgo"
 	"github.com/hajimehoshi/go-mp3"
+	hook "github.com/robotn/gohook"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/youpy/go-wav"
 )
@@ -21,8 +23,8 @@ import (
 type App struct {
 	ctx                          context.Context
 	fs                           *FileStorage
-	cancelLoopbackAudio          context.CancelFunc
 	cancelFunctionsForAudioFiles map[string]context.CancelFunc
+	cancelLoopbackAudio          context.CancelFunc
 }
 
 // NewApp creates a new App application struct
@@ -57,6 +59,8 @@ func (a *App) startup(ctx context.Context) {
 			log.Fatal(err)
 		}
 	}()
+
+	go a.registerAudioFileKeybindings()
 }
 
 // domReady is called after front-end resources have been loaded
@@ -542,6 +546,107 @@ func (a *App) LoopbackAudio(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ListAudioFileKeybindings lists all available audio file keybindings
+func (a *App) ListAudioFileKeybindings() (map[string]string, error) {
+	serializedAudioFileKeybindings, _ := a.fs.GetItem("audioFileKeybindings")
+	if serializedAudioFileKeybindings == "" {
+		return map[string]string{}, nil
+	}
+
+	var audioFileKeybindings map[string]string
+	if err := json.Unmarshal([]byte(serializedAudioFileKeybindings), &audioFileKeybindings); err != nil {
+		return nil, err
+	}
+
+	return audioFileKeybindings, nil
+}
+
+// SetAudioFileKeybinding sets the keybinding for an audio file
+func (a *App) SetAudioFileKeybinding(audioFile string, keybinding string) error {
+	if err := a.fs.UpdateItem("audioFileKeybindings", func(value string) (string, error) {
+		audioFileKeybindings := make(map[string]string)
+		if value != "" {
+			if err := json.Unmarshal([]byte(value), &audioFileKeybindings); err != nil {
+				return "", err
+			}
+		}
+
+		audioFileKeybindings[audioFile] = keybinding
+
+		serializedAudioFileKeybindings, err := json.Marshal(audioFileKeybindings)
+		if err != nil {
+			return "", err
+		}
+
+		return string(serializedAudioFileKeybindings), nil
+	}); err != nil {
+		return err
+	}
+
+	go a.reloadAudioFileKeybindings()
+
+	return nil
+}
+
+// RemoveAudioFileKeybinding removes the keybinding for an audio file
+func (a *App) RemoveAudioFileKeybinding(audioFile string) error {
+	if err := a.fs.UpdateItem("audioFileKeybindings", func(value string) (string, error) {
+		audioFileKeybindings := make(map[string]string)
+		if value != "" {
+			if err := json.Unmarshal([]byte(value), &audioFileKeybindings); err != nil {
+				return "", err
+			}
+		}
+
+		delete(audioFileKeybindings, audioFile)
+
+		serializedAudioFileKeybindings, err := json.Marshal(audioFileKeybindings)
+		if err != nil {
+			return "", err
+		}
+
+		return string(serializedAudioFileKeybindings), nil
+	}); err != nil {
+		return err
+	}
+
+	go a.reloadAudioFileKeybindings()
+
+	return nil
+}
+
+func (a *App) registerAudioFileKeybindings() error {
+	audioFileKeybindings, err := a.ListAudioFileKeybindings()
+	if err != nil {
+		return err
+	}
+
+	for audioFile, keybinding := range audioFileKeybindings {
+		if keybinding == "" {
+			continue
+		}
+
+		audioFile := audioFile
+
+		hook.Register(hook.KeyDown, strings.Split(strings.ToLower(keybinding), " + "), func(e hook.Event) {
+			if err := a.PlayAudioFile(audioFile); err != nil {
+				log.Fatal(err)
+			}
+		})
+	}
+
+	s := hook.Start()
+	<-hook.Process(s)
+
+	return nil
+}
+
+func (a *App) reloadAudioFileKeybindings() error {
+	hook.End()
+
+	return a.registerAudioFileKeybindings()
 }
 
 // ParseHexStringToDeviceID parses a hex string to a malgo.DeviceID

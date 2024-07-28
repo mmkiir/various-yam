@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/vcaesar/keycode v0.10.1 // indirect
 	github.com/youpy/go-riff v0.1.0 // indirect
 	github.com/zaf/g711 v0.0.0-20190814101024-76a4a538f52b // indirect
 )
@@ -33,6 +34,7 @@ require (
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
+	github.com/robotn/gohook v0.41.0
 	github.com/samber/lo v1.38.1 // indirect
 	github.com/tkrajina/go-reflector v0.5.6 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect

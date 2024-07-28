@@ -14,6 +14,10 @@ export function GetPlaybackDeviceID() {
   return window['go']['main']['App']['GetPlaybackDeviceID']();
 }
 
+export function ListAudioFileKeybindings() {
+  return window['go']['main']['App']['ListAudioFileKeybindings']();
+}
+
 export function ListAudioFiles() {
   return window['go']['main']['App']['ListAudioFiles']();
 }
@@ -40,6 +44,14 @@ export function PlayAudioFile(arg1) {
 
 export function RemoveAudioFile(arg1) {
   return window['go']['main']['App']['RemoveAudioFile'](arg1);
+}
+
+export function RemoveAudioFileKeybinding(arg1) {
+  return window['go']['main']['App']['RemoveAudioFileKeybinding'](arg1);
+}
+
+export function SetAudioFileKeybinding(arg1, arg2) {
+  return window['go']['main']['App']['SetAudioFileKeybinding'](arg1, arg2);
 }
 
 export function SetCaptureDeviceID(arg1) {

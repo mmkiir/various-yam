@@ -12,12 +12,14 @@ export const useCaptureDeviceID = () => {
     }
   }, { initialValue: '' })
 
+  const set = async (id: string) => {
+    await SetCaptureDeviceID(id)
+    await refetch()
+  }
+
   return {
     captureDeviceID: data,
     refetchCaptureDeviceID: refetch,
-    setCaptureDeviceID: async (id: string) => {
-      await SetCaptureDeviceID(id)
-      await refetch()
-    },
+    setCaptureDeviceID: set,
   }
 }

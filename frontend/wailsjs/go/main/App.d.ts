@@ -9,6 +9,8 @@ export function GetCaptureDeviceID():Promise<string>;
 
 export function GetPlaybackDeviceID():Promise<string>;
 
+export function ListAudioFileKeybindings():Promise<{[key: string]: string}>;
+
 export function ListAudioFiles():Promise<Array<string>>;
 
 export function ListCaptureDevices():Promise<Array<main.MediaDeviceInfo>>;
@@ -22,6 +24,10 @@ export function OpenMultipleFilesDialog(arg1:main.OpenDialogOptions):Promise<Arr
 export function PlayAudioFile(arg1:string):Promise<void>;
 
 export function RemoveAudioFile(arg1:string):Promise<void>;
+
+export function RemoveAudioFileKeybinding(arg1:string):Promise<void>;
+
+export function SetAudioFileKeybinding(arg1:string,arg2:string):Promise<void>;
 
 export function SetCaptureDeviceID(arg1:string):Promise<void>;
 
