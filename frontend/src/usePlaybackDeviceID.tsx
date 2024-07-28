@@ -12,12 +12,14 @@ export const usePlaybackDeviceID = () => {
     }
   }, { initialValue: '' })
 
+  const set = async (id: string) => {
+    await SetPlaybackDeviceID(id)
+    await refetch()
+  }
+
   return {
     playbackDeviceID: data,
     refetchPlaybackDeviceID: refetch,
-    setPlaybackDeviceID: async (id: string) => {
-      await SetPlaybackDeviceID(id)
-      await refetch()
-    },
+    setPlaybackDeviceID: set,
   }
 }
